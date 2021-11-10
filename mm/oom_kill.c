@@ -44,6 +44,7 @@
 #include <linux/kthread.h>
 #include <linux/init.h>
 #include <linux/mmu_notifier.h>
+#include <linux/futex.h>
 
 #include <asm/tlb.h>
 #include "internal.h"
@@ -613,6 +614,8 @@ static void oom_reap_task(struct task_struct *tsk)
 	int attempts = 0;
 	struct mm_struct *mm = tsk->signal->oom_mm;
 
+	futex_exit_release(tsk);
+
 	/* Retry the mmap_read_trylock(mm) a few times */
 	while (attempts++ < MAX_OOM_REAP_RETRIES && !oom_reap_task_mm(tsk, mm))
 		schedule_timeout_idle(HZ/10);
@@ -912,6 +915,7 @@ static void __oom_kill_process(struct task_struct *victim, const char *message)
 	 */
 	rcu_read_lock();
 	for_each_process(p) {
+		futex_exit_release(p);
 		if (!process_shares_mm(p, mm))
 			continue;
 		if (same_thread_group(p, victim))
