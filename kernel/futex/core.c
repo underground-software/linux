@@ -1060,16 +1060,7 @@ void futex_exit_recursive(struct task_struct *tsk)
 	tsk->futex_state = FUTEX_STATE_DEAD;
 }
 
-static void futex_cleanup_begin(struct task_struct *tsk)
-{
-	/*
-	 * Prevent various race issues against a concurrent incoming waiter
-	 * including live locks by forcing the waiter to block on
-	 * tsk->futex_exit_mutex when it observes FUTEX_STATE_EXITING in
-	 * attach_to_pi_owner().
-	 */
-	mutex_lock(&tsk->futex_exit_mutex);
-
+static void _futex_cleanup_begin(struct task_struct *tsk) {
 	/*
 	 * Switch the state to FUTEX_STATE_EXITING under tsk->pi_lock.
 	 *
@@ -1084,6 +1075,35 @@ static void futex_cleanup_begin(struct task_struct *tsk)
 	raw_spin_lock_irq(&tsk->pi_lock);
 	tsk->futex_state = FUTEX_STATE_EXITING;
 	raw_spin_unlock_irq(&tsk->pi_lock);
+}
+
+static void futex_cleanup_begin(struct task_struct *tsk)
+{
+	/*
+	 * Prevent various race issues against a concurrent incoming waiter
+	 * including live locks by forcing the waiter to block on
+	 * tsk->futex_exit_mutex when it observes FUTEX_STATE_EXITING in
+	 * attach_to_pi_owner().
+	 */
+	mutex_lock(&tsk->futex_exit_mutex);
+	_futex_cleanup_begin(tsk);
+}
+
+static int futex_cleanup_begin_atomic(struct task_struct *tsk)
+{
+	/*
+	 * Prevent various race issues against a concurrent incoming waiter
+	 * including live locks by forcing the waiter to block on
+	 * tsk->futex_exit_mutex when it observes FUTEX_STATE_EXITING in
+	 * attach_to_pi_owner().
+	 *
+	 * Try to do it atomically to allow futex_exit_release() to be called in the oom killer.
+	 * This will probably work. I have a good feeling about it.
+	 */
+	if (!mutex_trylock(&tsk->futex_exit_mutex))
+		return 1;
+	_futex_cleanup_begin(tsk);
+	return 0;
 }
 
 static void futex_cleanup_end(struct task_struct *tsk, int state)
@@ -1123,6 +1143,16 @@ void futex_exit_release(struct task_struct *tsk)
 	futex_cleanup_begin(tsk);
 	futex_cleanup(tsk);
 	futex_cleanup_end(tsk, FUTEX_STATE_DEAD);
+}
+
+int futex_exit_release_atomic(struct task_struct *tsk)
+{
+	if (futex_cleanup_begin_atomic(tsk))
+		return 1;
+	futex_cleanup(tsk);
+	futex_cleanup_end(tsk, FUTEX_STATE_DEAD);
+
+	return 0;
 }
 
 static void __init futex_detect_cmpxchg(void)

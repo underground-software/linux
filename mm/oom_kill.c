@@ -890,7 +890,9 @@ static void __oom_kill_process(struct task_struct *victim, const char *message)
 	 * We call futex_exit_release() on the victim task to ensure any waiters on any
 	 * process-shared futexes held by the victim task are woken up.
 	 */
-	futex_exit_release(victim);
+	if(futex_exit_release_atomic(victim)) {
+		pr_err("Unable to atomically release futexes for pid %d\n", task_pid_nr(victim));
+	}
 	/*
 	 * We should send SIGKILL before granting access to memory reserves
 	 * in order to prevent the OOM victim from depleting the memory
@@ -941,7 +943,9 @@ static void __oom_kill_process(struct task_struct *victim, const char *message)
 		 * victim->mm to ensure any waiters on any
 		 * process-shared futexes held by task p are woken up.
 		 */
-		futex_exit_release(p);
+		if(futex_exit_release_atomic(p)) {
+			pr_err("Unable to atomically release futexes for pid %d\n", task_pid_nr(p));
+		}
 		do_send_sig_info(SIGKILL, SEND_SIG_PRIV, p, PIDTYPE_TGID);
 	}
 	rcu_read_unlock();
