@@ -18,6 +18,19 @@ while read name size unit; do
 	fi
 done < /proc/meminfo
 
+# default means run all tests
+TEST_ITEMS=${TEST_ITEMS:-default}
+
+echo "Selected item items: ${TEST_ITEMS}"
+
+test_selected() {
+	if [ ${TEST_ITEMS} == "default" ]; then
+		return 0
+	fi
+	echo ${TEST_ITEMS} | grep "${1}" 2>&1 >/dev/null
+	return $?
+}
+
 # Simple hugetlbfs tests have a hardcoded minimum requirement of
 # huge pages totaling 256MB (262144KB) in size.  The userfaultfd
 # hugetlb test requires a minimum of 2 * nr_cpus huge pages.  Take
@@ -27,6 +40,9 @@ nr_cpus=$(nproc)
 hpgsize_MB=$((hpgsize_KB / 1024))
 half_ufd_size_MB=$((((nr_cpus * hpgsize_MB + 127) / 128) * 128))
 needmem_KB=$((half_ufd_size_MB * 2 * 1024))
+
+# hugepage setup only needed for hugetlb tests
+if test_selected "hugetlb"; then
 
 #set proper nr_hugepages
 if [ -n "$freepgs" ] && [ -n "$hpgsize_KB" ]; then
@@ -58,6 +74,8 @@ else
 	exit 1
 fi
 
+fi # test_selected "hugetlb"
+
 #filter 64bit architectures
 ARCH64STR="arm64 ia64 mips64 parisc64 ppc64 ppc64le riscv64 s390x sh64 sparc64 x86_64"
 if [ -z $ARCH ]; then
@@ -65,6 +83,8 @@ if [ -z $ARCH ]; then
 fi
 VADDR64=0
 echo "$ARCH64STR" | grep $ARCH && VADDR64=1
+
+if test_selected "hugetlb"; then
 
 mkdir $mnt
 mount -t hugetlbfs none $mnt
@@ -147,6 +167,26 @@ echo "NOTE: The above hugetlb tests provide minimal coverage.  Use"
 echo "      https://github.com/libhugetlbfs/libhugetlbfs.git for"
 echo "      hugetlb regression testing."
 
+#cleanup
+umount $mnt
+rm -rf $mnt
+echo $nr_hugepgs > /proc/sys/vm/nr_hugepages
+
+echo "-----------------"
+echo "running thuge-gen"
+echo "-----------------"
+./thuge-gen
+if [ $? -ne 0 ]; then
+	echo "[FAIL]"
+	exitcode=1
+else
+	echo "[PASS]"
+fi
+
+fi # test_selected "hugetlb"
+
+if test_selected "mmap_options"; then
+
 echo "---------------------------"
 echo "running map_fixed_noreplace"
 echo "---------------------------"
@@ -158,6 +198,22 @@ else
 	echo "[PASS]"
 fi
 
+
+echo "--------------------"
+echo "running map_populate"
+echo "--------------------"
+./map_populate
+if [ $? -ne 0 ]; then
+	echo "[FAIL]"
+	exitcode=1
+else
+	echo "[PASS]"
+fi
+
+fi # test_selected "mmap_options"
+
+if test_selected "gup_test"; then
+
 echo "------------------------------------------------------"
 echo "running: gup_test -u # get_user_pages_fast() benchmark"
 echo "------------------------------------------------------"
@@ -167,8 +223,8 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
@@ -183,8 +239,8 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
@@ -200,12 +256,16 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
 fi
+
+fi # test_selected "gup_test"
+
+if test_selected "userfaultd"; then
 
 echo "-------------------"
 echo "running userfaultfd"
@@ -242,10 +302,9 @@ else
 	echo "[PASS]"
 fi
 
-#cleanup
-umount $mnt
-rm -rf $mnt
-echo $nr_hugepgs > /proc/sys/vm/nr_hugepages
+fi # test_selected "userfaultfd"
+
+if test_selected "compaction_test"; then
 
 echo "-----------------------"
 echo "running compaction_test"
@@ -258,21 +317,14 @@ else
 	echo "[PASS]"
 fi
 
+fi # test_selected "compaction_test"
+
+if test_selected "mlock"; then
+
 echo "----------------------"
 echo "running on-fault-limit"
 echo "----------------------"
 sudo -u nobody ./on-fault-limit
-if [ $? -ne 0 ]; then
-	echo "[FAIL]"
-	exitcode=1
-else
-	echo "[PASS]"
-fi
-
-echo "--------------------"
-echo "running map_populate"
-echo "--------------------"
-./map_populate
 if [ $? -ne 0 ]; then
 	echo "[FAIL]"
 	exitcode=1
@@ -302,6 +354,10 @@ else
 	echo "[PASS]"
 fi
 
+fi # test_selected "mlock"
+
+if test_selected "mremap"; then
+
 echo "-------------------"
 echo "running mremap_test"
 echo "-------------------"
@@ -311,25 +367,34 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
 fi
 
-echo "-----------------"
-echo "running thuge-gen"
-echo "-----------------"
-./thuge-gen
-if [ $? -ne 0 ]; then
+
+echo "------------------------------------"
+echo "running MREMAP_DONTUNMAP smoke test"
+echo "------------------------------------"
+./mremap_dontunmap
+ret_val=$?
+
+if [ $ret_val -eq 0 ]; then
+	echo "[PASS]"
+elif [ $ret_val -eq $ksft_skip ]; then
+	echo "[SKIP]"
+	exitcode=$ksft_skip
+else
 	echo "[FAIL]"
 	exitcode=1
-else
-	echo "[PASS]"
 fi
+
+fi # test_selected "mremap"
 
 if [ $VADDR64 -ne 0 ]; then
+if test_selected "hugevm"; then
 echo "-----------------------------"
 echo "running virtual_address_range"
 echo "-----------------------------"
@@ -351,7 +416,11 @@ if [ $? -ne 0 ]; then
 else
     echo "[PASS]"
 fi
+fi # test_selected "hugevm"
 fi # VADDR64
+
+
+if test_selected "vmalloc"; then
 
 echo "------------------------------------"
 echo "running vmalloc stability smoke test"
@@ -369,21 +438,9 @@ else
 	exitcode=1
 fi
 
-echo "------------------------------------"
-echo "running MREMAP_DONTUNMAP smoke test"
-echo "------------------------------------"
-./mremap_dontunmap
-ret_val=$?
+fi # test_slected "vmalloc"
 
-if [ $ret_val -eq 0 ]; then
-	echo "[PASS]"
-elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
-else
-	echo "[FAIL]"
-	exitcode=1
-fi
+if test_selected "hmm"; then
 
 echo "running HMM smoke test"
 echo "------------------------------------"
@@ -399,6 +456,10 @@ else
 	echo "[FAIL]"
 	exitcode=1
 fi
+
+fi # test_selected "hmm"
+
+if test_selected "madv_populate"; then
 
 echo "--------------------------------------------------------"
 echo "running MADV_POPULATE_READ and MADV_POPULATE_WRITE tests"
@@ -416,6 +477,10 @@ else
 	exitcode=1
 fi
 
+fi # test_selected "memadv_populate"
+
+if test_selected "memfd_secret"; then
+
 echo "running memfd_secret test"
 echo "------------------------------------"
 ./memfd_secret
@@ -431,6 +496,10 @@ else
 	exitcode=1
 fi
 
+fi # test_selected "memfd_populate"
+
+if test_selected "ksm"; then
+
 echo "-------------------------------------------------------"
 echo "running KSM MADV_MERGEABLE test with 10 identical pages"
 echo "-------------------------------------------------------"
@@ -440,8 +509,8 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
@@ -456,8 +525,8 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
@@ -472,8 +541,8 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
@@ -488,12 +557,16 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
 fi
+
+fi # test_selected "ksm"
+
+if test_selected "ksm_numa"; then
 
 echo "-------------------------------------------------------------"
 echo "running KSM test with 2 NUMA nodes and merge_across_nodes = 1"
@@ -504,8 +577,8 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
@@ -520,13 +593,13 @@ ret_val=$?
 if [ $ret_val -eq 0 ]; then
 	echo "[PASS]"
 elif [ $ret_val -eq $ksft_skip ]; then
-	 echo "[SKIP]"
-	 exitcode=$ksft_skip
+	echo "[SKIP]"
+	exitcode=$ksft_skip
 else
 	echo "[FAIL]"
 	exitcode=1
 fi
 
-exit $exitcode
+fi # test_selected "ksm_numa"
 
 exit $exitcode
