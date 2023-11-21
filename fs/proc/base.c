@@ -3239,6 +3239,13 @@ static int proc_stack_depth(struct seq_file *m, struct pid_namespace *ns,
 }
 #endif /* CONFIG_STACKLEAK_METRICS */
 
+static const struct file_operations proc_task_cpuinfo_operations = {
+	.open		= proc_task_cpuinfo_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
 /*
  * Thread groups
  */
@@ -3360,6 +3367,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 	ONE("ksm_stat",  S_IRUSR, proc_pid_ksm_stat),
 #endif
 	ONE("meminfo",  S_IRUGO, proc_meminfo_show),
+	REG("cpuinfo",  S_IRUGO, proc_task_cpuinfo_operations),
 };
 
 static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
@@ -3700,6 +3708,7 @@ static const struct pid_entry tid_base_stuff[] = {
 	ONE("ksm_stat",  S_IRUSR, proc_pid_ksm_stat),
 #endif
 	ONE("meminfo",  S_IRUGO, proc_meminfo_show),
+	REG("cpuinfo",  S_IRUGO, proc_task_cpuinfo_operations),
 };
 
 static int proc_tid_base_readdir(struct file *file, struct dir_context *ctx)
